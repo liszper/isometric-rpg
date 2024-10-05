@@ -11,10 +11,12 @@ export class Player extends THREE.Group {
   currentPosition = new Vector3();
   targetPosition = new Vector3();
   isMoving = false;
-  jumpHeight = 0.5;
+  jumpHeight = 1; // Increased jump height
   jumpDuration = 0.5;
   jumpProgress = 0;
   isJumping = false;
+  jumpStartPosition = new Vector3();
+  jumpEndPosition = new Vector3();
   
   constructor(camera, world) {
     super();
@@ -79,12 +81,12 @@ export class Player extends THREE.Group {
       if (this.path === null || this.path.length === 0) return;
 
       // DEBUG: Show the path as breadcrumbs
-      this.path.forEach((coords) => {
+      this.path.forEach((step) => {
         const node = new THREE.Mesh(
           new THREE.SphereGeometry(0.1),
-          new THREE.MeshBasicMaterial({ color: 0xffff00 })
+          new THREE.MeshBasicMaterial({ color: step.jump ? 0xff0000 : 0xffff00 })
         );
-        node.position.set(coords.x + 0.5, 0.1, coords.y + 0.5);
+        node.position.set(step.position.x + 0.5, 0.1, step.position.y + 0.5);
         this.world.path.add(node);
       });
 
@@ -103,6 +105,21 @@ export class Player extends THREE.Group {
   startJump() {
     this.isJumping = true;
     this.jumpProgress = 0;
+    this.jumpStartPosition.copy(this.position);
+    
+    // Find the next non-jump step to set as the jump end position
+    let endIndex = this.pathIndex + 1;
+    while (endIndex < this.path.length && this.path[endIndex].jump) {
+      endIndex++;
+    }
+    if (endIndex < this.path.length) {
+      const endStep = this.path[endIndex];
+      this.jumpEndPosition.set(endStep.position.x + 0.5, 0, endStep.position.y + 0.5);
+    } else {
+      // If no non-jump step found, use the last step in the path
+      const lastStep = this.path[this.path.length - 1];
+      this.jumpEndPosition.set(lastStep.position.x + 0.5, 0, lastStep.position.y + 0.5);
+    }
   }
 
   updateJump(deltaTime) {
@@ -111,12 +128,27 @@ export class Player extends THREE.Group {
     this.jumpProgress += deltaTime / this.jumpDuration;
     if (this.jumpProgress >= 1) {
       this.isJumping = false;
+      this.position.copy(this.jumpEndPosition);
       this.bodyMesh.position.y = 0.5;
+      // Update pathIndex to the landing position
+      while (this.pathIndex < this.path.length && this.path[this.pathIndex].jump) {
+        this.pathIndex++;
+      }
+      this.updatePosition();
       return;
     }
 
-    const jumpHeight = Math.sin(this.jumpProgress * Math.PI) * this.jumpHeight;
-    this.bodyMesh.position.y = 0.5 + jumpHeight;
+    // Parabolic jump trajectory
+    const t = this.jumpProgress;
+    const jumpCurve = 4 * t * (1 - t); // Parabolic curve peaking at t=0.5
+    const jumpHeight = this.jumpHeight * jumpCurve;
+
+    // Interpolate position
+    this.position.lerpVectors(this.jumpStartPosition, this.jumpEndPosition, t);
+    this.position.y += jumpHeight;
+
+    // Update body mesh position
+    this.bodyMesh.position.y = 0.5;
   }
 
   updatePosition() {
@@ -125,16 +157,20 @@ export class Player extends THREE.Group {
       return;
     }
 
-    const nextTile = this.path[this.pathIndex];
-    this.targetPosition.set(nextTile.x + 0.5, 0, nextTile.y + 0.5);
+    const nextStep = this.path[this.pathIndex];
+    this.targetPosition.set(nextStep.position.x + 0.5, 0, nextStep.position.y + 0.5);
     this.currentPosition.copy(this.position);
     this.isMoving = true;
+
+    if (nextStep.jump) {
+      this.startJump();
+    }
   }
 
   update(deltaTime) {
-    this.updateJump(deltaTime);
-
-    if (this.isMoving) {
+    if (this.isJumping) {
+      this.updateJump(deltaTime);
+    } else if (this.isMoving) {
       const step = this.moveSpeed * deltaTime;
       const distanceToTarget = this.currentPosition.distanceTo(this.targetPosition);
 
