@@ -87,6 +87,7 @@ function animate(currentTime) {
   camera.lookAt(playerPosition);
 
   player.update(deltaTime);
+  world.update(deltaTime); // Add this line to update NPCs
 
   renderer.render(scene, camera);
   stats.update();
@@ -106,3 +107,4 @@ worldFolder.add(world, 'rockCount', 1, 100, 1).name('Rock Count');
 worldFolder.add(world, 'bushCount', 1, 100, 1).name('Bush Count');
 
 worldFolder.add(world, 'generate').name('Generate');
+worldFolder.add(world, 'npcCount', 0, 20, 1).name('NPC Count');

@@ -1,10 +1,12 @@
 import * as THREE from 'three';
+import { NPC } from './npc';
 
 const textureLoader = new THREE.TextureLoader();
 const gridTexture = textureLoader.load('textures/grid.png');
 
 export class World extends THREE.Group {
   #objectMap = new Map();
+  #npcs = [];
 
   /**
    * Returns the key for the object map given a set of coordinates
@@ -21,6 +23,7 @@ export class World extends THREE.Group {
     this.treeCount = 10;
     this.rockCount = 20;
     this.bushCount = 10;
+    this.npcCount = 5; // Number of NPCs to create
 
     this.trees = new THREE.Group();
     this.add(this.trees);
@@ -34,6 +37,9 @@ export class World extends THREE.Group {
     this.path = new THREE.Group();
     this.add(this.path);
 
+    this.npcs = new THREE.Group();
+    this.add(this.npcs);
+
     this.generate();
   }
 
@@ -43,6 +49,7 @@ export class World extends THREE.Group {
     this.createTrees();
     this.createRocks();
     this.createBushes();
+    this.createNPCs();
   }
 
   clear() {
@@ -202,6 +209,26 @@ export class World extends THREE.Group {
 
       this.#objectMap.set(this.getKey(coords), bushMesh);
     }
+  }
+
+  createNPCs() {
+    for (let i = 0; i < this.npcCount; i++) {
+      let coords;
+      do {
+        coords = new THREE.Vector2(
+          Math.floor(this.width * Math.random()),
+          Math.floor(this.height * Math.random())
+        );
+      } while (this.#objectMap.has(this.getKey(coords)));
+
+      const npc = new NPC(this, coords);
+      this.npcs.add(npc);
+      this.#npcs.push(npc);
+    }
+  }
+
+  update(deltaTime) {
+    this.#npcs.forEach(npc => npc.update(deltaTime));
   }
 
   /**

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Vector3 } from 'three';
 import { search } from './pathfinding';
+import { PlayerJump } from './jump';
 
 export class Player extends THREE.Group {
   raycaster = new THREE.Raycaster();
@@ -11,12 +12,6 @@ export class Player extends THREE.Group {
   currentPosition = new Vector3();
   targetPosition = new Vector3();
   isMoving = false;
-  jumpHeight = 1; // Increased jump height
-  jumpDuration = 0.5;
-  jumpProgress = 0;
-  isJumping = false;
-  jumpStartPosition = new Vector3();
-  jumpEndPosition = new Vector3();
   
   constructor(camera, world) {
     super();
@@ -43,6 +38,8 @@ export class Player extends THREE.Group {
 
     this.currentPosition.copy(this.position);
     this.targetPosition.copy(this.position);
+
+    this.jump = new PlayerJump(this);
 
     window.addEventListener('mousedown', this.onMouseDown.bind(this));
     window.addEventListener('keydown', this.onKeyDown.bind(this));
@@ -78,7 +75,10 @@ export class Player extends THREE.Group {
       this.path = search(playerCoords, selectedCoords, this.world);
 
       // If no path found, return early
-      if (this.path === null || this.path.length === 0) return;
+      if (!this.path || this.path.length === 0) {
+        console.log("No valid path found");
+        return;
+      }
 
       // DEBUG: Show the path as breadcrumbs
       this.path.forEach((step) => {
@@ -97,62 +97,13 @@ export class Player extends THREE.Group {
   }
 
   onKeyDown(event) {
-    if (event.code === 'Space' && !this.isJumping) {
-      this.startJump();
+    if (event.code === 'Space' && !this.jump.isJumping) {
+      this.jump.startJump();
     }
-  }
-
-  startJump() {
-    this.isJumping = true;
-    this.jumpProgress = 0;
-    this.jumpStartPosition.copy(this.position);
-    
-    // Find the next non-jump step to set as the jump end position
-    let endIndex = this.pathIndex + 1;
-    while (endIndex < this.path.length && this.path[endIndex].jump) {
-      endIndex++;
-    }
-    if (endIndex < this.path.length) {
-      const endStep = this.path[endIndex];
-      this.jumpEndPosition.set(endStep.position.x + 0.5, 0, endStep.position.y + 0.5);
-    } else {
-      // If no non-jump step found, use the last step in the path
-      const lastStep = this.path[this.path.length - 1];
-      this.jumpEndPosition.set(lastStep.position.x + 0.5, 0, lastStep.position.y + 0.5);
-    }
-  }
-
-  updateJump(deltaTime) {
-    if (!this.isJumping) return;
-
-    this.jumpProgress += deltaTime / this.jumpDuration;
-    if (this.jumpProgress >= 1) {
-      this.isJumping = false;
-      this.position.copy(this.jumpEndPosition);
-      this.bodyMesh.position.y = 0.5;
-      // Update pathIndex to the landing position
-      while (this.pathIndex < this.path.length && this.path[this.pathIndex].jump) {
-        this.pathIndex++;
-      }
-      this.updatePosition();
-      return;
-    }
-
-    // Parabolic jump trajectory
-    const t = this.jumpProgress;
-    const jumpCurve = 4 * t * (1 - t); // Parabolic curve peaking at t=0.5
-    const jumpHeight = this.jumpHeight * jumpCurve;
-
-    // Interpolate position
-    this.position.lerpVectors(this.jumpStartPosition, this.jumpEndPosition, t);
-    this.position.y += jumpHeight;
-
-    // Update body mesh position
-    this.bodyMesh.position.y = 0.5;
   }
 
   updatePosition() {
-    if (this.pathIndex >= this.path.length) {
+    if (!this.path || this.path.length === 0 || this.pathIndex >= this.path.length) {
       this.isMoving = false;
       return;
     }
@@ -163,13 +114,13 @@ export class Player extends THREE.Group {
     this.isMoving = true;
 
     if (nextStep.jump) {
-      this.startJump();
+      this.jump.startJump();
     }
   }
 
   update(deltaTime) {
-    if (this.isJumping) {
-      this.updateJump(deltaTime);
+    if (this.jump.isJumping) {
+      this.jump.updateJump(deltaTime);
     } else if (this.isMoving) {
       const step = this.moveSpeed * deltaTime;
       const distanceToTarget = this.currentPosition.distanceTo(this.targetPosition);
@@ -179,15 +130,8 @@ export class Player extends THREE.Group {
         this.currentPosition.lerp(this.targetPosition, step / distanceToTarget);
         this.position.copy(this.currentPosition);
 
-        // Rotate towards movement direction
-        const direction = new THREE.Vector3().subVectors(this.targetPosition, this.currentPosition).normalize();
-        const targetRotation = Math.atan2(direction.x, direction.z);
-        const rotationStep = this.rotationSpeed * deltaTime;
-        this.rotation.y = THREE.MathUtils.lerp(
-          this.rotation.y,
-          targetRotation,
-          Math.min(1, rotationStep / Math.abs(targetRotation - this.rotation.y))
-        );
+        // Update rotation to face movement direction
+        this.updateRotation(deltaTime);
       } else {
         // Reached current target
         this.position.copy(this.targetPosition);
@@ -195,6 +139,39 @@ export class Player extends THREE.Group {
         this.pathIndex++;
         this.updatePosition(); // Move to the next position in the path
       }
+    }
+  }
+
+  // New method to update rotation
+  updateRotation(deltaTime) {
+    const direction = new THREE.Vector3().subVectors(this.targetPosition, this.currentPosition).normalize();
+    if (direction.lengthSq() > 0.001) { // Check if there's a significant direction
+      const targetRotation = Math.atan2(direction.x, direction.z);
+      const currentRotation = this.rotation.y;
+      
+      // Calculate the shortest angle
+      let angleDiff = targetRotation - currentRotation;
+      angleDiff = ((angleDiff + Math.PI) % (Math.PI * 2)) - Math.PI;
+      
+      const rotationStep = this.rotationSpeed * deltaTime;
+      const step = Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), rotationStep);
+      
+      this.rotation.y += step;
+      
+      // Normalize the rotation to keep it between -PI and PI
+      this.rotation.y = ((this.rotation.y + Math.PI) % (Math.PI * 2)) - Math.PI;
+    }
+  }
+
+  // Modify moveDirection method
+  moveDirection(direction) {
+    const newPosition = this.position.clone().add(direction);
+    if (this.canMoveTo(newPosition)) {
+      this.position.copy(newPosition);
+      this.currentPosition.copy(newPosition);
+      this.targetPosition.copy(newPosition);
+      // Update rotation when moving
+      this.updateRotation(1 / 60); // Assume 60 FPS for smooth rotation
     }
   }
 
@@ -212,6 +189,8 @@ export class Player extends THREE.Group {
       this.position.copy(newPosition);
       this.currentPosition.copy(newPosition);
       this.targetPosition.copy(newPosition);
+      // Update rotation when moving
+      this.updateRotation(1 / 60); // Assume 60 FPS for smooth rotation
     }
   }
 }
