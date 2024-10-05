@@ -14,6 +14,21 @@ export class Character extends THREE.Group {
   eventListeners = {};
   targetRotation = 0;
   isRotating = false;
+  pathVisualization = null; // Change this line
+  pathColor = new THREE.Color(Math.random(), Math.random(), Math.random());
+  legAngle = 0;
+  legAnimationSpeed = 5; // Adjust this to control leg swing speed
+  eyeColor = 0xffffff;
+  blinkInterval = 3000; // Blink every 3 seconds
+  blinkDuration = 150; // Blink lasts for 150ms
+  emoteInterval = 10000; // Emote every 10 seconds
+  emotes = ['😊', '😄', '🤔', '😎', '🙂'];
+  currentEmote = null;
+  emoteObject = null;
+  jumpHeight = 0.5;
+  jumpDuration = 0.5;
+  isJumping = false;
+  jumpStartTime = 0;
 
   constructor(world, color = 0x4040c0, scale = 1) {
     super();
@@ -24,6 +39,11 @@ export class Character extends THREE.Group {
     this.bodyMesh = new THREE.Mesh(bodyGeometry, bodyMaterial);
     this.bodyMesh.position.y = 0.5 * scale;
     this.add(this.bodyMesh);
+
+    // Add legs
+    this.leftLeg = this.createLeg(scale, -0.15 * scale);
+    this.rightLeg = this.createLeg(scale, 0.15 * scale);
+    this.add(this.leftLeg, this.rightLeg);
 
     // Add a small cone to indicate forward direction
     const directionIndicator = new THREE.Mesh(
@@ -38,6 +58,34 @@ export class Character extends THREE.Group {
 
     this.currentPosition.copy(this.position);
     this.targetPosition.copy(this.position);
+
+    // Change these lines:
+    this.pathVisualization = new THREE.Group();
+    this.world.add(this.pathVisualization); // Add to the world instead of the scene
+
+    // Add eyes
+    this.eyes = this.createEyes(scale);
+    this.bodyMesh.add(this.eyes);
+
+    // Start blinking
+    this.startBlinking();
+
+    // Add a shadow
+    this.addShadow(scale);
+
+    // Add emote object
+    this.createEmoteObject(scale);
+
+    // Start emoting
+    this.startEmoting();
+  }
+
+  createLeg(scale, xOffset) {
+    const legGeometry = new THREE.CapsuleGeometry(0.1 * scale, 0.3 * scale, 2, 8);
+    const legMaterial = new THREE.MeshStandardMaterial({ color: this.bodyMesh.material.color });
+    const leg = new THREE.Mesh(legGeometry, legMaterial);
+    leg.position.set(xOffset, 0.15 * scale, 0);
+    return leg;
   }
 
   findPath(startCoords, endCoords) {
@@ -60,7 +108,7 @@ export class Character extends THREE.Group {
       return;
     }
 
-    this.world.path.clear();
+    this.clearPathVisualization();
 
     this.path = search(startCoords, nearestWalkableTile, this.world);
 
@@ -69,15 +117,7 @@ export class Character extends THREE.Group {
       return;
     }
 
-    // DEBUG: Show the path as breadcrumbs
-    this.path.forEach((step) => {
-      const node = new THREE.Mesh(
-        new THREE.SphereGeometry(0.1),
-        new THREE.MeshBasicMaterial({ color: 0xffff00 })
-      );
-      node.position.set(step.position.x + 0.5, 0.1, step.position.y + 0.5);
-      this.world.path.add(node);
-    });
+    this.visualizePath();
 
     this.pathIndex = 0;
     this.updatePosition();
@@ -92,10 +132,52 @@ export class Character extends THREE.Group {
           lastStep.position.y - secondLastStep.position.y
         ).normalize();
         this.faceTowards(this.position.clone().add(finalDirection));
+        
+        // Replace this.jump() with:
+        if (typeof this.jump === 'function') {
+          this.jump();
+        } else {
+          console.warn('jump method is not defined');
+        }
+        
         this.removeEventListener('reachedPathEnd', onReachDestination);
       }
     };
     this.addEventListener('reachedPathEnd', onReachDestination);
+  }
+
+  clearPathVisualization() {
+    while (this.pathVisualization.children.length > 0) {
+      const child = this.pathVisualization.children[0];
+      this.pathVisualization.remove(child);
+      child.geometry.dispose();
+      child.material.dispose();
+    }
+  }
+
+  visualizePath() {
+    const pathGeometry = new THREE.BufferGeometry();
+    const positions = [];
+
+    this.path.forEach((step) => {
+      positions.push(step.position.x + 0.5, 0.1, step.position.y + 0.5);
+    });
+
+    pathGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+
+    const pathMaterial = new THREE.LineBasicMaterial({ color: this.pathColor });
+    const pathLine = new THREE.Line(pathGeometry, pathMaterial);
+    this.pathVisualization.add(pathLine);
+
+    // Add small spheres at each path point
+    const sphereGeometry = new THREE.SphereGeometry(0.1);
+    const sphereMaterial = new THREE.MeshBasicMaterial({ color: this.pathColor });
+
+    this.path.forEach((step) => {
+      const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+      sphere.position.set(step.position.x + 0.5, 0.1, step.position.y + 0.5);
+      this.pathVisualization.add(sphere);
+    });
   }
 
   findNearestWalkableTile(clickedCoords, playerCoords) {
@@ -152,6 +234,9 @@ export class Character extends THREE.Group {
 
         // Update rotation to face movement direction
         this.updateRotation(deltaTime);
+
+        // Animate legs
+        this.animateLegs(deltaTime);
       } else {
         // Reached current target
         this.position.copy(this.targetPosition);
@@ -159,6 +244,9 @@ export class Character extends THREE.Group {
         this.pathIndex++;
         this.updatePosition(); // Move to the next position in the path
       }
+    } else {
+      // Reset legs to neutral position when not moving
+      this.resetLegs();
     }
 
     // Smooth rotation
@@ -177,6 +265,19 @@ export class Character extends THREE.Group {
         // Normalize the rotation to keep it between -PI and PI
         this.rotation.y = ((this.rotation.y + Math.PI) % (Math.PI * 2)) - Math.PI;
       }
+    }
+
+    // Update shadow position
+    if (this.shadow) {
+      this.shadow.position.x = this.position.x;
+      this.shadow.position.z = this.position.z;
+    }
+
+    this.updateJump();
+
+    // Make emote face the camera
+    if (this.world.camera) {
+      this.emoteObject.quaternion.copy(this.world.camera.quaternion);
     }
   }
 
@@ -241,6 +342,129 @@ export class Character extends THREE.Group {
   triggerEvent(event) {
     if (this.eventListeners[event]) {
       this.eventListeners[event].forEach(callback => callback());
+    }
+  }
+
+  animateLegs(deltaTime) {
+    this.legAngle += this.legAnimationSpeed * deltaTime;
+    const leftLegY = Math.sin(this.legAngle) * 0.2;
+    const rightLegY = Math.sin(this.legAngle + Math.PI) * 0.2;
+
+    this.leftLeg.position.y = 0.15 + leftLegY;
+    this.rightLeg.position.y = 0.15 + rightLegY;
+
+    // Add a slight forward/backward motion
+    const legForward = Math.cos(this.legAngle) * 0.1;
+    this.leftLeg.position.z = legForward;
+    this.rightLeg.position.z = -legForward;
+  }
+
+  resetLegs() {
+    this.leftLeg.position.set(-0.15, 0.15, 0);
+    this.rightLeg.position.set(0.15, 0.15, 0);
+  }
+
+  createEyes(scale) {
+    const eyesGroup = new THREE.Group();
+    const eyeGeometry = new THREE.SphereGeometry(0.05 * scale, 16, 16);
+    const eyeMaterial = new THREE.MeshStandardMaterial({ color: this.eyeColor });
+    
+    const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    leftEye.position.set(0.1 * scale, 0.7 * scale, 0.22 * scale);
+    
+    const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+    rightEye.position.set(-0.1 * scale, 0.7 * scale, 0.22 * scale);
+    
+    eyesGroup.add(leftEye, rightEye);
+    return eyesGroup;
+  }
+
+  startBlinking() {
+    setInterval(() => {
+      this.blink();
+    }, this.blinkInterval);
+  }
+
+  blink() {
+    this.eyes.scale.y = 0.1;
+    setTimeout(() => {
+      this.eyes.scale.y = 1;
+    }, this.blinkDuration);
+  }
+
+  addShadow(scale) {
+    const shadowGeometry = new THREE.CircleGeometry(0.3 * scale, 32);
+    const shadowMaterial = new THREE.MeshBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 0.3,
+    });
+    this.shadow = new THREE.Mesh(shadowGeometry, shadowMaterial);
+    this.shadow.rotation.x = -Math.PI / 2;
+    this.shadow.position.y = 0.01;
+    this.add(this.shadow);
+  }
+
+  createEmoteObject(scale) {
+    const emoteGeometry = new THREE.PlaneGeometry(0.5 * scale, 0.5 * scale);
+    const emoteMaterial = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0,
+      depthTest: false,
+    });
+    this.emoteObject = new THREE.Mesh(emoteGeometry, emoteMaterial);
+    this.emoteObject.position.set(0, 1.5 * scale, 0);
+    this.emoteObject.renderOrder = 1; // Ensure it renders on top
+    this.add(this.emoteObject);
+  }
+
+  startEmoting() {
+    setInterval(() => {
+      this.showRandomEmote();
+    }, this.emoteInterval);
+  }
+
+  showRandomEmote() {
+    this.currentEmote = this.emotes[Math.floor(Math.random() * this.emotes.length)];
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.font = '48px Arial';
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(this.currentEmote, 32, 32);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    this.emoteObject.material.map = texture;
+    this.emoteObject.material.opacity = 1;
+    this.emoteObject.material.needsUpdate = true;
+
+    setTimeout(() => {
+      this.emoteObject.material.opacity = 0;
+      this.emoteObject.material.needsUpdate = true;
+    }, 2000);
+  }
+
+  jump() {
+    if (!this.isJumping) {
+      this.isJumping = true;
+      this.jumpStartTime = Date.now();
+    }
+  }
+
+  updateJump() {
+    if (this.isJumping) {
+      const elapsedTime = (Date.now() - this.jumpStartTime) / 1000;
+      if (elapsedTime < this.jumpDuration) {
+        const jumpProgress = elapsedTime / this.jumpDuration;
+        const jumpHeight = Math.sin(jumpProgress * Math.PI) * this.jumpHeight;
+        this.position.y = jumpHeight;
+      } else {
+        this.position.y = 0;
+        this.isJumping = false;
+      }
     }
   }
 }

@@ -239,4 +239,12 @@ export class World extends THREE.Group {
   getObject(coords) {
     return this.#objectMap.get(this.getKey(coords)) ?? null;
   }
+
+  addObject(object) {
+    this.scene.add(object);
+  }
+
+  removeObject(object) {
+    this.scene.remove(object);
+  }
 }

@@ -11,11 +11,9 @@ export class NPC extends Character {
     this.isIdling = false;
     this.idleTime = 0;
     this.idleDuration = 0;
+    this.destination = null;
 
     this.findNewDestination();
-
-    this.addEventListener('reachedDestination', () => this.onReachedDestination());
-    this.addEventListener('noPathFound', () => this.findNewDestination());
   }
 
   findNewDestination() {
@@ -28,18 +26,38 @@ export class NPC extends Character {
       );
     } while (this.world.getObject(new THREE.Vector2(endCoords.x, endCoords.z)));
 
+    this.destination = endCoords;
     this.setDestination(endCoords);
-  }
-
-  onReachedDestination() {
-    this.startIdling();
   }
 
   startIdling() {
     this.isMoving = false;
     this.isIdling = true;
     this.idleTime = 0;
-    this.idleDuration = Math.random() * 5 + 2; // Idle for 2-7 seconds
+    
+    // Occasionally make the NPC idle for a much longer time
+    if (Math.random() < 0.2) { // 20% chance for long idle
+      this.idleDuration = Math.random() * 30 + 30; // Idle for 30-60 seconds
+    } else {
+      this.idleDuration = Math.random() * 5 + 2; // Normal idle for 2-7 seconds
+    }
+
+    // Clear the path visualization
+    this.clearPath();
+  }
+
+  clearPath() {
+    // Remove the current path visualization
+    if (this.pathVisualization) {
+      if (this.world && this.world.scene) {
+        this.world.scene.remove(this.pathVisualization);
+      } else if (this.pathVisualization.parent) {
+        this.pathVisualization.parent.remove(this.pathVisualization);
+      }
+      this.pathVisualization = null;
+    }
+    // Clear the current path
+    this.path = [];
   }
 
   update(deltaTime) {
@@ -54,9 +72,10 @@ export class NPC extends Character {
 
     super.update(deltaTime);
 
-    // If not moving and not idling, find a new destination
-    if (!this.isMoving && !this.isIdling) {
-      this.findNewDestination();
+    // Check if we've reached the destination
+    if (this.destination && this.position.distanceTo(this.destination) < 0.1) {
+      this.destination = null;
+      this.startIdling();
     }
   }
 }
